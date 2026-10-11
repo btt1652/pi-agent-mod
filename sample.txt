@@ -1,0 +1,3 @@
+This is a sample text file.
+It was created by the pi coding agent.
+You can edit this file as needed.
