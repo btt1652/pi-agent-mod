@@ -9,7 +9,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/models";
 
 export default function (pi: ExtensionAPI) {
-  pi.registerCommand("openrouter-free", {
+  pi.registerCommand("openrouter-free-models-list", {
     description:
       "Query OpenRouter for free models, rank them by capability, and display the best picks",
     handler: async (_args: string, ctx) => {
@@ -67,6 +67,11 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      // Tag each model with its API popularity rank (0-indexed)
+      models.forEach((m, i) => {
+        (m as Record<string, unknown>).apiRank = i;
+      });
+
       // Filter free models (both prompt and completion must be free)
       const freeModels = models.filter((m) => {
         const p = m.pricing?.prompt;
@@ -88,34 +93,37 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── Scoring ──────────────────────────────────────────────────────
-      // Only scores models that have benchmark data. Models without
-      // benchmarks get no score and fall to the bottom.
-      function score(m: (typeof freeModels)[0]): number {
+      // Base score from API popularity rank (1st=10, 2nd=9, ...)
+      // + quality score from indices (0-100 scale)
+      function totalScore(m: (typeof freeModels)[0]): number {
+        const apiRank = (m as Record<string, unknown>).apiRank as number;
+        const baseScore = Math.max(10 - apiRank, 0);
+
         const codingIdx = getIdx(m, "coding_index");
         const intIdx = getIdx(m, "intelligence_index");
         const agenticIdx = getIdx(m, "agentic_index");
 
-        // No benchmarks → skip scoring (will sort last)
-        if (codingIdx < 0 || intIdx < 0 || agenticIdx < 0) return -1;
+        let qualityScore = 0;
+        if (codingIdx >= 0 && intIdx >= 0 && agenticIdx >= 0) {
+          qualityScore += Math.min(codingIdx / 100, 1) * 35;
+          qualityScore += Math.min(intIdx / 100, 1) * 30;
+          qualityScore += Math.min(agenticIdx / 100, 1) * 35;
+        }
 
-        let s = 0;
-        s += Math.min(codingIdx / 100, 1) * 35;
-        s += Math.min(intIdx / 100, 1) * 30;
-        s += Math.min(agenticIdx / 100, 1) * 35;
-        return s;
+        return baseScore + qualityScore;
       }
 
       freeModels.forEach((m) => {
-        (m as Record<string, unknown>).qualityScore = score(m);
+        (m as Record<string, unknown>).totalScore = totalScore(m);
       });
 
       freeModels.sort(
         (a, b) =>
-          ((b as Record<string, unknown>).qualityScore as number) -
-          ((a as Record<string, unknown>).qualityScore as number),
+          ((b as Record<string, unknown>).totalScore as number) -
+          ((a as Record<string, unknown>).totalScore as number),
       );
 
-      const top = freeModels.slice(0, 15);
+      const top = freeModels.slice(0, 16);
 
       // ── Format output ────────────────────────────────────────────────
       const padId = Math.max(...top.map((m) => String(m.id ?? "").length));
